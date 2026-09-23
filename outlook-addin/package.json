@@ -1,0 +1,23 @@
+{
+  "name": "send-to-skylight",
+  "version": "1.0.0",
+  "description": "Outlook add-in that sends an appointment (incl. recurring) as a .ics + friendly email to the Skylight Calendar import address.",
+  "private": true,
+  "scripts": {
+    "start": "node scripts/network-server.js",
+    "serve": "node scripts/network-server.js",
+    "network": "node scripts/network-server.js",
+    "sideload": "office-addin-debugging start manifest.xml desktop",
+    "sideload:web": "office-addin-debugging start manifest.xml web",
+    "stop": "office-addin-debugging stop manifest.xml",
+    "validate": "office-addin-manifest validate manifest.xml",
+    "validate:network": "office-addin-manifest validate manifest.network.xml",
+    "icons": "python3 gen_icons.py",
+    "sync": "cp src/app.html docs/app.html && cp src/app.css docs/app.css && cp src/app.js docs/app.js && cp src/ics.js docs/ics.js && cp src/timezones.js docs/timezones.js && echo 'docs/ synced'",
+    "github-manifest": "bash scripts/setup-github-manifest.sh"
+  },
+  "devDependencies": {
+    "office-addin-debugging": "^5.1.0",
+    "office-addin-manifest": "^1.12.0"
+  }
+}

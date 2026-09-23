@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Send to Skylight</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="app-header">
+    <span class="logo">&#9749;</span>
+    <h1>Send to Skylight</h1>
+  </header>
+
+  <main>
+    <section class="card" id="appointmentCard">
+      <h2>Appointment</h2>
+
+      <label class="field">
+        <span>Title</span>
+        <input type="text" id="txtTitle" maxlength="200">
+      </label>
+
+      <label class="field">
+        <span>Category (optional)</span>
+        <input type="text" id="txtCategory" maxlength="100" placeholder="e.g. Family, Work, Sports">
+      </label>
+
+      <div class="field-row">
+        <label class="field">
+          <span>Start</span>
+          <input type="datetime-local" id="txtStart">
+        </label>
+        <label class="field">
+          <span>End</span>
+          <input type="datetime-local" id="txtEnd">
+        </label>
+      </div>
+
+      <label class="field checkbox">
+        <input type="checkbox" id="chkAllDay">
+        <span>All-day event</span>
+      </label>
+
+      <label class="field">
+        <span>Location</span>
+        <input type="text" id="txtLocation" maxlength="255" placeholder="Optional">
+      </label>
+
+      <label class="field">
+        <span>Details</span>
+        <textarea id="txtDetails" rows="4" maxlength="5000" placeholder="Optional"></textarea>
+      </label>
+
+      <div class="info-box" id="recurrenceBox">
+        <strong>Repeats:</strong> <span id="recurrenceText">No</span>
+      </div>
+    </section>
+
+    <section class="card" id="emailCard">
+      <h2>Skylight import email</h2>
+      <p class="hint">
+        Your Skylight&#8217;s Magic Import address, e.g. <code>my-skylight@ourskylight.com</code>.
+        We remember it so you only enter it once.
+      </p>
+      <label class="field">
+        <span>Import email</span>
+        <input type="email" id="txtSkylightEmail" placeholder="you@ourskylight.com">
+      </label>
+      <div class="error-box" id="errorBox" style="display:none;"></div>
+      <div class="success-box" id="statusBox" style="display:none;"></div>
+    </section>
+  </main>
+
+  <footer>
+    <button type="button" id="btnSend" class="primary" disabled>Send to Skylight</button>
+    <div class="quick-actions" style="display: flex; gap: 8px; margin-top: 8px;">
+      <button type="button" id="btnCopyIcs" style="flex: 1; padding: 7px 8px; font: inherit; background: #fff; border: 1px solid var(--border); border-radius: 6px; cursor: pointer;">Copy .ics</button>
+      <button type="button" id="btnDownloadIcs" style="flex: 1; padding: 7px 8px; font: inherit; background: #fff; border: 1px solid var(--border); border-radius: 6px; cursor: pointer;">Download .ics</button>
+    </div>
+    <div class="fallback" id="fallbackArea" style="display:none;">
+      <hr>
+      <p class="hint">Compose window not available. Open in your default mail app:</p>
+      <button type="button" id="btnMailto" style="width: 100%; padding: 8px; font: inherit; background: #fff; border: 1px solid var(--border); border-radius: 6px; cursor: pointer;">Open in Email App</button>
+    </div>
+  </footer>
+
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="timezones.js"></script>
+  <script src="ics.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
