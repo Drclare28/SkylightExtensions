@@ -1,6 +1,6 @@
 /* Send to Skylight - taskpane logic (Office.js).
- * Reads the open appointment, builds an .ics + friendly text, and opens a
- * compose form to the Skylight Magic Import email, with fallbacks.
+ * Reads the open appointment, builds an .ics + friendly text, and sends it
+ * automatically to the Skylight Magic Import email via EWS (with ICS attached).
  *
  * Requirements: Mailbox 1.7 (recurrence). Features newer than 1.7 are
  * feature-detected and degraded gracefully.
@@ -352,6 +352,15 @@
 
   /* ---------- sending ---------- */
 
+  function escapeXml(str) {
+    return String(str || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&apos;");
+  }
+
   function sendToSkylight() {
     clearError();
     clearStatus();
@@ -369,27 +378,45 @@
     var subject = category ? (category + " - " + title) : title;
 
     $("btnSend").disabled = true;
-    showStatus("Sending…");
+    showStatus("Sending...");
 
     var mb = typeof Office !== "undefined" && Office.context ? Office.context.mailbox : null;
 
-    // Try auto-send via Outlook REST API (requires ReadWriteMailbox permission in manifest)
+    // Primary: EWS via makeEwsRequestAsync — uses the active Exchange session,
+    // no separate OAuth token required, supports attachments. Requires ReadWriteMailbox.
+    if (mb && typeof mb.makeEwsRequestAsync === "function") {
+      sendViaEws(mb, email, subject, body, ics, function (ok, ewsErr) {
+        if (ok) {
+          $("btnSend").disabled = false;
+          showStatus("\u2705 Sent to Skylight! The .ics file was attached automatically.");
+        } else {
+          // EWS failed — try REST API as secondary before falling back to compose
+          showStatus("EWS unavailable (" + ewsErr + "), trying REST API...");
+          tryRestFallback(mb, email, subject, body, ics);
+        }
+      });
+    } else {
+      // EWS not present (browser / OWA without Exchange) — try REST then compose
+      tryRestFallback(mb, email, subject, body, ics);
+    }
+  }
+
+  function tryRestFallback(mb, email, subject, body, ics) {
     if (mb && typeof mb.getCallbackTokenAsync === "function") {
       mb.getCallbackTokenAsync({ isRest: true }, function (tokenResult) {
         if (tokenResult && tokenResult.status === Office.AsyncResultStatus.Succeeded && tokenResult.value) {
           var token = tokenResult.value;
           var restUrl = (mb.restUrl || "https://outlook.office.com/api").replace(/\/+$/, "");
-          sendViaRestApi(restUrl, token, email, subject, body, ics, function (ok, err) {
+          sendViaRestApi(restUrl, token, email, subject, body, ics, function (ok, restErr) {
             $("btnSend").disabled = false;
             if (ok) {
-              showStatus("✅ Sent to Skylight! The .ics file was attached automatically.");
+              showStatus("\u2705 Sent to Skylight! The .ics file was attached automatically.");
             } else {
-              showError("Auto-send failed: " + (err || "unknown error") + ". Opening compose window instead.");
+              showError("Auto-send failed (" + restErr + "). Opening compose window — please attach the .ics manually.");
               showFallbackCompose(email, subject, body, ics);
             }
           });
         } else {
-          // Token unavailable — fall back to compose window
           $("btnSend").disabled = false;
           showFallbackCompose(email, subject, body, ics);
         }
@@ -401,8 +428,71 @@
   }
 
   /**
-   * POST to the Outlook REST API to send an email with the ICS as a base64 attachment.
-   * Calls callback(true) on success, callback(false, errorMessage) on failure.
+   * Send via Exchange Web Services (EWS/SOAP). Uses the active Exchange session —
+   * no separate OAuth token required. Requires ReadWriteMailbox manifest permission.
+   * callback(true) on success, callback(false, errorMessage) on failure.
+   */
+  function sendViaEws(mb, toEmail, subject, body, icsContent, callback) {
+    var icsBase64 = base64Utf8(icsContent);
+    var soap =
+      '<?xml version="1.0" encoding="utf-8"?>' +
+      '<soap:Envelope' +
+      ' xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"' +
+      ' xmlns:xsd="http://www.w3.org/2001/XMLSchema"' +
+      ' xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/"' +
+      ' xmlns:t="http://schemas.microsoft.com/exchange/services/2006/types"' +
+      ' xmlns:m="http://schemas.microsoft.com/exchange/services/2006/messages">' +
+      '<soap:Header>' +
+      '<t:RequestServerVersion Version="Exchange2013" />' +
+      '</soap:Header>' +
+      '<soap:Body>' +
+      '<m:CreateItem MessageDisposition="SendAndSaveCopy">' +
+      '<m:Items>' +
+      '<t:Message>' +
+      '<t:Subject>' + escapeXml(subject) + '</t:Subject>' +
+      '<t:Body BodyType="Text">' + escapeXml(body) + '</t:Body>' +
+      '<t:ToRecipients>' +
+      '<t:Mailbox><t:EmailAddress>' + escapeXml(toEmail) + '</t:EmailAddress></t:Mailbox>' +
+      '</t:ToRecipients>' +
+      '<t:Attachments>' +
+      '<t:FileAttachment>' +
+      '<t:Name>skylight-event.ics</t:Name>' +
+      '<t:ContentType>text/calendar; charset=utf-8</t:ContentType>' +
+      '<t:IsInline>false</t:IsInline>' +
+      '<t:Content>' + icsBase64 + '</t:Content>' +
+      '</t:FileAttachment>' +
+      '</t:Attachments>' +
+      '</t:Message>' +
+      '</m:Items>' +
+      '</m:CreateItem>' +
+      '</soap:Body>' +
+      '</soap:Envelope>';
+
+    mb.makeEwsRequestAsync(soap, function (result) {
+      if (result.status === Office.AsyncResultStatus.Succeeded) {
+        try {
+          var parser = new DOMParser();
+          var doc = parser.parseFromString(result.value, "text/xml");
+          var responseClass = doc.querySelector("[ResponseClass]");
+          if (responseClass && responseClass.getAttribute("ResponseClass") === "Error") {
+            var msgEl = doc.querySelector("MessageText");
+            callback(false, msgEl ? msgEl.textContent : "EWS returned an error");
+          } else {
+            callback(true);
+          }
+        } catch (e) {
+          callback(false, "Could not parse EWS response: " + e.message);
+        }
+      } else {
+        var errMsg = result.error ? result.error.message : "EWS request failed";
+        callback(false, errMsg);
+      }
+    });
+  }
+
+  /**
+   * POST to the Outlook REST API (secondary fallback — deprecated in some tenants).
+   * callback(true) on success, callback(false, errorMessage) on failure.
    */
   function sendViaRestApi(restUrl, token, toEmail, subject, body, icsContent, callback) {
     var icsBase64 = base64Utf8(icsContent);
@@ -443,7 +533,7 @@
   }
 
   function showFallbackCompose(email, subject, body, ics) {
-    // Download ICS so the user can attach it manually if needed
+    // Download ICS so the user can attach it manually
     downloadIcs(false);
     var mb = typeof Office !== "undefined" && Office.context ? Office.context.mailbox : null;
     var formData = {
