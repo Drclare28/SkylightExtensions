@@ -364,48 +364,118 @@
 
     var title = ($("txtTitle").value || "").trim() || "Appointment";
     var category = ($("txtCategory").value || "").trim();
-
     var ics = buildIcs();
     var body = buildTextBody();
     var subject = category ? (category + " - " + title) : title;
+
+    $("btnSend").disabled = true;
+    showStatus("Sending…");
+
+    var mb = typeof Office !== "undefined" && Office.context ? Office.context.mailbox : null;
+
+    // Try auto-send via Outlook REST API (requires ReadWriteMailbox permission in manifest)
+    if (mb && typeof mb.getCallbackTokenAsync === "function") {
+      mb.getCallbackTokenAsync({ isRest: true }, function (tokenResult) {
+        if (tokenResult && tokenResult.status === Office.AsyncResultStatus.Succeeded && tokenResult.value) {
+          var token = tokenResult.value;
+          var restUrl = (mb.restUrl || "https://outlook.office.com/api").replace(/\/+$/, "");
+          sendViaRestApi(restUrl, token, email, subject, body, ics, function (ok, err) {
+            $("btnSend").disabled = false;
+            if (ok) {
+              showStatus("✅ Sent to Skylight! The .ics file was attached automatically.");
+            } else {
+              showError("Auto-send failed: " + (err || "unknown error") + ". Opening compose window instead.");
+              showFallbackCompose(email, subject, body, ics);
+            }
+          });
+        } else {
+          // Token unavailable — fall back to compose window
+          $("btnSend").disabled = false;
+          showFallbackCompose(email, subject, body, ics);
+        }
+      });
+    } else {
+      $("btnSend").disabled = false;
+      showFallbackCompose(email, subject, body, ics);
+    }
+  }
+
+  /**
+   * POST to the Outlook REST API to send an email with the ICS as a base64 attachment.
+   * Calls callback(true) on success, callback(false, errorMessage) on failure.
+   */
+  function sendViaRestApi(restUrl, token, toEmail, subject, body, icsContent, callback) {
+    var icsBase64 = base64Utf8(icsContent);
+    var payload = JSON.stringify({
+      Message: {
+        Subject: subject,
+        Body: { ContentType: "Text", Content: body },
+        ToRecipients: [{ EmailAddress: { Address: toEmail } }],
+        Attachments: [{
+          "@odata.type": "#Microsoft.OutlookServices.FileAttachment",
+          Name: "skylight-event.ics",
+          ContentType: "text/calendar; charset=utf-8; method=REQUEST",
+          ContentBytes: icsBase64
+        }]
+      },
+      SaveToSentItems: true
+    });
+
+    var xhr = new XMLHttpRequest();
+    xhr.open("POST", restUrl + "/v2.0/me/sendmail", true);
+    xhr.setRequestHeader("Authorization", "Bearer " + token);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.onreadystatechange = function () {
+      if (xhr.readyState !== 4) return;
+      if (xhr.status === 202 || xhr.status === 200) {
+        callback(true);
+      } else {
+        var msg = "HTTP " + xhr.status;
+        try {
+          var resp = JSON.parse(xhr.responseText);
+          if (resp && resp.error && resp.error.message) msg += ": " + resp.error.message;
+        } catch (e) { /* ignore */ }
+        callback(false, msg);
+      }
+    };
+    xhr.onerror = function () { callback(false, "Network error"); };
+    xhr.send(payload);
+  }
+
+  function showFallbackCompose(email, subject, body, ics) {
+    // Download ICS so the user can attach it manually if needed
+    downloadIcs(false);
+    var mb = typeof Office !== "undefined" && Office.context ? Office.context.mailbox : null;
     var formData = {
       toRecipients: [email],
       subject: subject,
       body: { type: "text", content: body }
     };
-
-    // Download ICS so user always has the file ready to attach
-    downloadIcs(false);
-
-    var mb = typeof Office !== "undefined" && Office.context ? Office.context.mailbox : null;
-    if (mb && typeof mb.displayNewMessageForm === "function") {
-      try {
-        mb.displayNewMessageForm(formData);
-        showStatus("Compose window opened! skylight-event.ics has also been saved to your downloads.");
-        return;
-      } catch (e) {
-        showFallback();
-        return;
-      }
-    }
     if (mb && typeof mb.displayNewMessageFormAsync === "function") {
       mb.displayNewMessageFormAsync(formData, function (result) {
         if (result && result.status === Office.AsyncResultStatus.Failed) {
-          showFallback();
+          showFallback(email, subject);
         } else {
-          showStatus("Compose window opened! skylight-event.ics has also been saved to your downloads.");
+          showStatus("Compose window opened. Please attach skylight-event.ics (saved to Downloads) and click Send.");
         }
       });
-      return;
+    } else if (mb && typeof mb.displayNewMessageForm === "function") {
+      try {
+        mb.displayNewMessageForm(formData);
+        showStatus("Compose window opened. Please attach skylight-event.ics (saved to Downloads) and click Send.");
+      } catch (e) {
+        showFallback(email, subject);
+      }
+    } else {
+      showFallback(email, subject);
     }
-    showFallback();
   }
 
-  function showFallback() {
-    var email = ($("txtSkylightEmail").value || "").trim();
+  function showFallback(email, subject) {
+    email = email || ($("txtSkylightEmail").value || "").trim();
     var title = ($("txtTitle").value || "").trim() || "Appointment";
     var category = ($("txtCategory").value || "").trim();
-    var subject = category ? (category + " - " + title) : title;
+    subject = subject || (category ? (category + " - " + title) : title);
 
     var mailto = "mailto:" + encodeURIComponent(email) +
       "?subject=" + encodeURIComponent(subject) +
