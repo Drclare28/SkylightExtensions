@@ -8,6 +8,7 @@
 (function () {
   "use strict";
 
+  var APP_VERSION = "v3-EWS-2026-09-23";
   var SETTINGS_KEY = "skylightEmail";
   var ICS_FILENAME = "skylight-event.ics";
 
@@ -378,35 +379,36 @@
     var subject = category ? (category + " - " + title) : title;
 
     $("btnSend").disabled = true;
-    showStatus("Sending...");
+    showStatus("[" + APP_VERSION + "] Step 1: checking for EWS...");
 
     var mb = typeof Office !== "undefined" && Office.context ? Office.context.mailbox : null;
 
-    // Primary: EWS via makeEwsRequestAsync — uses the active Exchange session,
-    // no separate OAuth token required, supports attachments. Requires ReadWriteMailbox.
     if (mb && typeof mb.makeEwsRequestAsync === "function") {
+      showStatus("[" + APP_VERSION + "] Step 2: EWS found, sending via EWS...");
       sendViaEws(mb, email, subject, body, ics, function (ok, ewsErr) {
         if (ok) {
           $("btnSend").disabled = false;
           showStatus("\u2705 Sent to Skylight! The .ics file was attached automatically.");
         } else {
-          // EWS failed — try REST API as secondary before falling back to compose
-          showStatus("EWS unavailable (" + ewsErr + "), trying REST API...");
+          showStatus("[" + APP_VERSION + "] EWS failed: " + ewsErr + " — trying REST API...");
           tryRestFallback(mb, email, subject, body, ics);
         }
       });
     } else {
-      // EWS not present (browser / OWA without Exchange) — try REST then compose
+      showStatus("[" + APP_VERSION + "] Step 2: EWS not available (mb=" + !!mb + "), trying REST...");
       tryRestFallback(mb, email, subject, body, ics);
     }
   }
 
   function tryRestFallback(mb, email, subject, body, ics) {
     if (mb && typeof mb.getCallbackTokenAsync === "function") {
+      showStatus("[" + APP_VERSION + "] Step 3: requesting REST token...");
       mb.getCallbackTokenAsync({ isRest: true }, function (tokenResult) {
+        var tokenStatus = tokenResult ? tokenResult.status : "null";
         if (tokenResult && tokenResult.status === Office.AsyncResultStatus.Succeeded && tokenResult.value) {
           var token = tokenResult.value;
           var restUrl = (mb.restUrl || "https://outlook.office.com/api").replace(/\/+$/, "");
+          showStatus("[" + APP_VERSION + "] Step 4: sending via REST to " + restUrl + "...");
           sendViaRestApi(restUrl, token, email, subject, body, ics, function (ok, restErr) {
             $("btnSend").disabled = false;
             if (ok) {
@@ -418,6 +420,7 @@
           });
         } else {
           $("btnSend").disabled = false;
+          showStatus("[" + APP_VERSION + "] REST token failed (status=" + tokenStatus + ") — opening compose window...");
           showFallbackCompose(email, subject, body, ics);
         }
       });
@@ -816,6 +819,7 @@
   function init() {
     wireReload();
     loadEmail();
+    showStatus("Loaded " + APP_VERSION);
     $("txtSkylightEmail").addEventListener("change", function () { saveEmail(); validateAndEnable(); });
     $("txtSkylightEmail").addEventListener("input", validateAndEnable);
     $("btnSend").addEventListener("click", sendToSkylight);
